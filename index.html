@@ -242,11 +242,24 @@
             deleteConfirm: { isOpen: false, dayId: '', index: null, location: '' }
         };
 
-        // ================= [Firebase 雲端同步系統] =================
+        // ================= [Firebase 雲端同步系統 (極致除錯版)] =================
         let app, auth, db, user, appId;
         
-        app = initializeApp(MY_OWN_FIREBASE_CONFIG);
-        appId = 'my-chiikawa-family-trip'; 
+        try {
+            app = initializeApp(MY_OWN_FIREBASE_CONFIG);
+            appId = 'my-chiikawa-family-trip'; 
+        } catch(e) {
+            console.error("初始化失敗", e);
+        }
+
+        // 🚨 連線超時偵測雷達 🚨
+        setTimeout(() => {
+            if (state.syncStatus === 'syncing') {
+                alert('呀哈！雲端連線卡住了喔！😭\n\n常見原因：\n1. 用 LINE 的瀏覽器開啟會被擋住，請點選「在 Safari/Chrome 開啟」\n2. 手機還沒更新到最新網頁，請用「無痕模式」重開\n3. 開啟了 AdGuard 等擋廣告軟體阻擋連線\n\n你還是可以繼續用單機版喔！');
+                state.syncStatus = 'error';
+                renderDOM();
+            }
+        }, 10000); // 10秒後如果還在轉圈圈就報錯
 
         if (app) {
             auth = getAuth(app);
@@ -292,7 +305,7 @@
                         if (error.code === 'permission-denied') {
                             alert("資料庫被上鎖囉！烏拉！\n\n請去 Firebase 的 Firestore Database -> Rules (規則)\n貼上我給你的那段解鎖密碼並發布！");
                         } else {
-                            alert("同步失敗：" + error.message);
+                            alert("同步發生網路錯誤：" + error.message + "\n請確定沒有在用 LINE 瀏覽器喔！");
                         }
                         state.syncStatus = 'error';
                         renderDOM();
@@ -338,17 +351,13 @@
             try {
                 const loc = locationsMap[dayId];
                 const dayInfo = days.find(d => d.id === dayId);
-                // 組合目標日期 (例如：'2026-05-08')
                 const [month, day] = dayInfo.date.split('/');
                 const targetDate = `2026-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
                 
-                // 嘗試抓取「指定日期」的天氣
                 let url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone=Asia%2FTokyo&start_date=${targetDate}&end_date=${targetDate}`;
                 let res = await fetch(url);
                 let isFallback = false;
 
-                // 如果指定日期太遠 (氣象局預報最多通常 14~16 天)，API 會回傳 400 錯誤。
-                // 遇到錯誤時，我們自動改抓「今天的當地天氣」當作參考。
                 if (!res.ok) {
                     url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone=Asia%2FTokyo&forecast_days=1`;
                     res = await fetch(url);
@@ -571,13 +580,11 @@
                 `;
             });
 
-            // 💡 根據新的判定機制，決定標題和顯示方式
             const weather = window.weatherCache[state.activeDay];
             let weatherHtml = '';
-            let weatherTitle = '';
+            let weatherTitle = '當地即時天氣';
             
             if (!weather || weather.loading) {
-                weatherTitle = '當地即時天氣';
                 weatherHtml = `
                     <div class="flex items-center gap-1.5 mt-1">
                         <i data-lucide="loader-2" class="w-4 h-4 animate-spin text-[#FF6B9E]"></i>
@@ -586,7 +593,6 @@
                 `;
                 if (!weather) setTimeout(() => window.fetchWeather(state.activeDay), 0);
             } else if (weather.error) {
-                weatherTitle = '當地即時天氣';
                 weatherHtml = `
                     <div class="flex items-center gap-1.5 mt-1 text-gray-400">
                         <span class="font-black text-sm">無法取得天氣</span>
@@ -812,6 +818,31 @@
                         </button>
                     </div>
 
+                    <div class="bg-white/80 backdrop-blur-md border border-white rounded-[2.5rem] p-6 shadow-md relative text-center pb-10">
+                        <h3 class="font-black text-[18px] mb-2 text-[#5D4A45] flex items-center justify-center gap-2">
+                            <span class="text-2xl">⛩️</span> 每日好運御神籤
+                        </h3>
+                        <p class="text-[11px] font-bold text-[#5D4A45]/60 mb-5">每天早上出門前，讓小八幫你抽一張好運籤！</p>
+                        
+                        <div class="bg-gradient-to-b from-red-50 to-white rounded-[1.5rem] p-6 border border-red-100 shadow-inner min-h-[120px] flex items-center justify-center mb-5">
+                            ${state.isFortuneDrawing ? `
+                                <div class="animate-shake flex flex-col items-center gap-2">
+                                    <span class="text-4xl">🎋</span>
+                                    <span class="text-red-500 font-black text-sm">小八正在用力搖籤筒...</span>
+                                </div>
+                            ` : state.fortuneResult ? `
+                                <div class="animate-pop text-[#B91C1C] font-black text-lg leading-relaxed px-2">
+                                    ${state.fortuneResult}
+                                </div>
+                            ` : `
+                                <span class="text-gray-400 font-bold text-sm">今天運勢如何呢？</span>
+                            `}
+                        </div>
+                        
+                        <button onclick="window.drawFortune()" class="w-full bg-gradient-to-r from-red-400 to-red-500 text-white font-black text-lg py-4 rounded-[1.5rem] shadow-md hover:shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2" ${state.isFortuneDrawing ? 'disabled' : ''}>
+                            搖籤筒！
+                        </button>
+                    </div>
                 </div>
             `;
         };
@@ -1017,27 +1048,25 @@
             }
         };
 
-        window.playGacha = () => {
-            if (state.gachaAnimating) return;
-            
-            state.gachaAnimating = true;
+        window.drawFortune = () => {
+            if (state.isFortuneDrawing) return;
+            state.isFortuneDrawing = true;
             renderDOM();
 
-            const options = ['拉麵 🍜', '燒肉 🥩', '迴轉壽司 🍣', '居酒屋 🍢', '便利商店大餐 🍙', '漢堡排 🍛', '豬排飯 🍱', '烏龍麵 🍲', '文字燒 🥘', '速食漢堡 🍔', '生魚片海鮮丼 🐟'];
-            let ticks = 0;
-            
-            const interval = setInterval(() => {
-                state.gachaResult = options[Math.floor(Math.random() * options.length)];
-                renderDOM(); 
-                ticks++;
-                
-                if(ticks > 15) {
-                    clearInterval(interval);
-                    state.gachaAnimating = false;
-                    state.gachaResult = `🐰 兔兔說：吃【${state.gachaResult}】！烏拉！！`;
-                    renderDOM();
-                }
-            }, 100);
+            const fortunes = [
+                "🌟 大吉！今天扭蛋一發入魂，想要哪隻就來哪隻！呀哈！",
+                "🍱 中吉！今天會吃到超級美味的隱藏版在地美食！烏拉！",
+                "🛍️ 小吉！今天會買到最後一個限量的超讚伴手禮！",
+                "📸 吉！今天天氣超好，不管怎麼拍照都超級好看！",
+                "♨️ 大吉！泡溫泉通體舒暢，旅途疲勞全消散！",
+                "💰 吉！匯率剛好很划算，結帳的時候感覺賺到了！"
+            ];
+
+            setTimeout(() => {
+                state.fortuneResult = fortunes[Math.floor(Math.random() * fortunes.length)];
+                state.isFortuneDrawing = false;
+                renderDOM();
+            }, 1200); 
         };
 
         window.switchTab = (tabId) => {
@@ -1120,6 +1149,29 @@
                 state.copyItinerarySuccess = false;
                 renderDOM();
             }, 3000);
+        };
+
+        window.playGacha = () => {
+            if (state.gachaAnimating) return;
+            
+            state.gachaAnimating = true;
+            renderDOM();
+
+            const options = ['拉麵 🍜', '燒肉 🥩', '迴轉壽司 🍣', '居酒屋 🍢', '便利商店大餐 🍙', '漢堡排 🍛', '豬排飯 🍱', '烏龍麵 🍲', '文字燒 🥘', '速食漢堡 🍔', '生魚片海鮮丼 🐟'];
+            let ticks = 0;
+            
+            const interval = setInterval(() => {
+                state.gachaResult = options[Math.floor(Math.random() * options.length)];
+                renderDOM(); 
+                ticks++;
+                
+                if(ticks > 15) {
+                    clearInterval(interval);
+                    state.gachaAnimating = false;
+                    state.gachaResult = `🐰 兔兔說：吃【${state.gachaResult}】！烏拉！！`;
+                    renderDOM();
+                }
+            }, 100);
         };
 
         window.toggleCheck = (id) => {
@@ -1271,6 +1323,3 @@
     </script>
 </body>
 </html>
-
-
-```
